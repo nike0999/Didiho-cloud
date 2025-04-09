@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>body{font-family:Arial,sans-serif;margin:20px}table{border-collapse:collapse;width:100%;margin-bottom:20px}th,td{border:1px solid #ddd;padding:8px;text-align:center}th{background-color:#f2f2f2;font-weight:bold}.input-section{margin-bottom:20px}input,select{padding:5px;margin:5px}button{padding:8px 15px;background-color:#4CAF50;color:white;border:none;cursor:pointer;border-radius:4px;margin-right:5px;margin-bottom:5px}button:hover{background-color:#45a049}.danger-button{background-color:#f44336}.danger-button:hover{background-color:#d32f2f}.secondary-button{background-color:#2196F3}.secondary-button:hover{background-color:#0b7dda}.time-input{width:80px;text-align:center}.count-input{width:50px;text-align:center}.editable{background-color:#f8f9fa}.editable:hover{background-color:#e2e6ea;cursor:pointer}.assigned{background-color:#E3F2FD;text-align:left}.free-day-cell{background-color:#ffecb3}.modal{display:none;position:fixed;z-index:1;left:0;top:0;width:100%;height:100%;overflow:auto;background-color:rgba(0,0,0,0.4)}.modal-content{background-color:#fefefe;margin:15% auto;padding:20px;border:1px solid #888;width:50%;border-radius:5px;box-shadow:0 4px 8px 0 rgba(0,0,0,0.2)}.modal-buttons{margin-top:20px;text-align:right}.modal-buttons button{margin-left:10px}.employee-settings{display:flex;flex-wrap:wrap;align-items:center;margin-bottom:15px;padding:10px;border-bottom:1px solid #eee}.employee-name{min-width:100px;font-weight:bold;margin-right:15px}.preference-section{margin-top:5px;display:flex;flex-wrap:wrap;align-items:center}.free-days-list{margin-left:15px}.day-preference{display:inline-flex;align-items:center;margin-right:15px;white-space:nowrap}.day-preference input[type="checkbox"]{margin-right:5px}.accordion{background-color:#f8f9fa;cursor:pointer;padding:10px;width:100%;border:none;text-align:left;font-weight:bold}.accordion:hover{background-color:#e7e7e7}.panel{max-height:0;overflow:hidden;transition:max-height 0.2s ease-out}.panel-open{max-height:1000px;padding:10px;border:1px solid #ddd;border-top:none}.count-container{margin-right:20px;display:flex;align-items:center}.checkbox-group{display:flex;flex-wrap:wrap}</style>
+</head>
+<body>
+  <h1>Rozpis služeb zaměstnanců</h1>
+  <div class="input-section">
+    <h2>Správa zaměstnanců</h2>
+    <input type="text" id="employeeName" placeholder="Jméno zaměstnance">
+    <button onclick="addEmployee()">Přidat</button>
+    <button onclick="removeEmployee()">Odebrat posledního</button>
+    <button onclick="initializeDefaultEmployees()" class="secondary-button">Naplnit výchozími zaměstnanci</button>
+    <button onclick="resetAllAssignments()" class="danger-button">Resetovat všechna obsazení</button>
+  </div>
+  <button class="accordion" onclick="togglePanel('preferencesPanel')">Nastavení volných dnů</button>
+  <div id="preferencesPanel" class="panel"><div id="freeDayControls"></div></div>
+  <div class="input-section">
+    <h2>Ruční přiřazení služeb</h2>
+    <p>Vyberte den, směnu a zaměstnance:</p>
+    <select id="assignDay"></select>
+    <select id="assignShift"></select>
+    <select id="assignEmployee"></select>
+    <button onclick="assignEmployee()">Přiřadit</button>
+    <button onclick="removeAssignment()">Odebrat přiřazení</button>
+    <button onclick="document.getElementById('confirmModal').style.display='block'" class="secondary-button">Rozdělit všechny směny</button>
+  </div>
+  <table id="scheduleTable">
+    <thead>
+      <tr><th rowspan="2">Den</th><th colspan="3">Ráno</th><th colspan="3">Odpoledne</th><th colspan="3">Večer</th><th rowspan="2">Volno</th></tr>
+      <tr><th>Čas</th><th>Počet</th><th>Obsazení</th><th>Čas</th><th>Počet</th><th>Obsazení</th><th>Čas</th><th>Počet</th><th>Obsazení</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div class="summary"><h2>Souhrn hodin</h2><div id="hoursSummary"></div></div>
+  <div id="confirmModal" class="modal">
+    <div class="modal-content">
+      <h3>Potvrdit akci</h3>
+      <p>Opravdu chcete rozdělit všechny směny? Tato akce zachová ručně přiřazené směny.</p>
+      <div class="modal-buttons">
+        <button onclick="document.getElementById('confirmModal').style.display='none'">Zrušit</button>
+        <button onclick="distributeShifts()">Potvrdit</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const employees = [], freeDays = {}, freeDaysCount = {}, dayPreferences = {}, fixedAssignments = {}, 
+          days = ["Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota", "Neděle"], 
+          shiftTypes = ["morning", "afternoon", "evening"], shiftLabels = {"morning":"Ráno", "afternoon":"Odpoledne", "evening":"Večer"}, 
+          defaultEmployees = ["Dominik", "Patrik", "Nicolas", "Michal", "Adam"], shifts = {};
+    
+    function shuffle(array) {
+      const result = [...array];
+      for(let i = result.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [result[i], result[j]] = [result[j], result[i]];
+      }
+      return result;
+    }
+    
+    days.forEach(d => {
+      shifts[d] = {}; 
+      fixedAssignments[d] = {};
+      shiftTypes.forEach(s => {
+        shifts[d][s] = {time:"00:00-00:00", count:0, assigned:[]};
+        fixedAssignments[d][s] = [];
+      });
+    });
+    
+    days.forEach(d => assignDay.appendChild(Object.assign(document.createElement("option"), {value:d, textContent:d})));
+    Object.entries(shiftLabels).forEach(([k,v]) => assignShift.appendChild(Object.assign(document.createElement("option"), {value:k, textContent:v})));
+    
+    function togglePanel(id) {document.getElementById(id).classList.toggle("panel-open");}
+    
+    function initializeDefaultEmployees() {
+      employees.length = 0; 
+      Object.keys(freeDays).forEach(e => delete freeDays[e]); 
+      Object.keys(freeDaysCount).forEach(e => delete freeDaysCount[e]); 
+      Object.keys(dayPreferences).forEach(e => delete dayPreferences[e]);
+      days.forEach(d => shiftTypes.forEach(s => fixedAssignments[d][s] = []));
+      
+      defaultEmployees.forEach(e => {
+        employees.push(e); 
+        freeDays[e] = []; 
+        freeDaysCount[e] = 2; 
+        dayPreferences[e] = {}; 
+        days.forEach(d => dayPreferences[e][d] = false);
+      });
+      
+      updateTable(); 
+      updateEmployeeDropdown(); 
+      updateFreeDayControls();
+    }
+    
+    function resetAllAssignments() {
+      days.forEach(d => shiftTypes.forEach(s => {
+        shifts[d][s].assigned = [];
+        fixedAssignments[d][s] = [];
+      }));
+      employees.forEach(e => freeDays[e] = []);
+      updateTable();
+    }
+    
+    function updateFreeDayControls() {
+      const container = document.getElementById("freeDayControls");
+      container.innerHTML = "";
+      
+      employees.forEach(e => {
+        const div = document.createElement("div");
+        div.className = "employee-settings";
+        div.appendChild(Object.assign(document.createElement("div"), {className:"employee-name", textContent:e}));
+        
+        const countContainer = document.createElement("div");
+        countContainer.className = "count-container";
+        const countInput = Object.assign(document.createElement("input"), {type:"number", min:0, max:7, value:freeDaysCount[e]||0, style:"width:50px"});
+        countInput.addEventListener("change", function() {freeDaysCount[e] = parseInt(this.value)||0;});
+        countContainer.appendChild(countInput);
+        countContainer.appendChild(Object.assign(document.createElement("span"), {textContent:" volných dnů"}));
+        div.appendChild(countContainer);
+        
+        const checkboxGroup = document.createElement("div");
+        checkboxGroup.className = "checkbox-group";
+        days.forEach(d => {
+          const dayPref = document.createElement("div");
+          dayPref.className = "day-preference";
+          const cbId = `${e}-${d}`;
+          const checkbox = Object.assign(document.createElement("input"), {type:"checkbox", id:cbId, checked:dayPreferences[e]?.[d]||false});
+          checkbox.addEventListener("change", function() {dayPreferences[e][d] = this.checked;});
+          dayPref.appendChild(checkbox);
+          dayPref.appendChild(Object.assign(document.createElement("label"), {htmlFor:cbId, textContent:d}));
+          checkboxGroup.appendChild(dayPref);
+        });
+        div.appendChild(checkboxGroup);
+        
+        if(freeDays[e]?.length > 0) {
+          div.appendChild(Object.assign(document.createElement("div"), {
+            className:"free-days-list", 
+            style:"width:100%;margin-top:5px", 
+            innerHTML:"<strong>Aktuální volné dny:</strong> " + freeDays[e].join(", ")
+          }));
+        }
+        container.appendChild(div);
+      });
+    }
+    
+    function updateCount(d, s, c) {
+      c = parseInt(c)||0;
+      const fixed = [...fixedAssignments[d][s]];
+      if(c < shifts[d][s].assigned.length) {
+        const nonFixedCount = Math.max(0, c - fixed.length);
+        const nonFixed = shifts[d][s].assigned.filter(e => !fixed.includes(e)).slice(0, nonFixedCount);
+        shifts[d][s].assigned = [...fixed, ...nonFixed];
+      }
+      shifts[d][s].count = c;
+      updateTable();
+    }
+    
+    function addEmployee() {
+      const name = document.getElementById("employeeName").value.trim();
+      if(name && employees.length < 10) {
+        employees.push(name); 
+        freeDays[name] = []; 
+        freeDaysCount[name] = 2; 
+        dayPreferences[name] = {}; 
+        days.forEach(d => dayPreferences[name][d] = false);
+        updateTable(); 
+        updateEmployeeDropdown(); 
+        updateFreeDayControls();
+        document.getElementById("employeeName").value = "";
+      } else if(employees.length >= 10) alert("Maximální počet zaměstnanců je 10.");
+    }
+    
+    function removeEmployee() {
+      if(employees.length > 0) {
+        const removed = employees.pop();
+        delete freeDays[removed]; delete freeDaysCount[removed]; delete dayPreferences[removed];
+        days.forEach(d => shiftTypes.forEach(s => {
+          shifts[d][s].assigned = shifts[d][s].assigned.filter(e => e !== removed);
+          fixedAssignments[d][s] = fixedAssignments[d][s].filter(e => e !== removed);
+        }));
+        updateTable(); updateEmployeeDropdown(); updateFreeDayControls();
+      }
+    }
+    
+    function updateEmployeeDropdown() {
+      document.getElementById("assignEmployee").innerHTML = employees.map(e => `<option value="${e}">${e}</option>`).join("");
+    }
+    
+    function assignEmployee() {
+      const d = document.getElementById("assignDay").value;
+      const s = document.getElementById("assignShift").value;
+      const e = document.getElementById("assignEmployee").value;
+      
+      if(!e) return alert("Nejprve přidejte zaměstnance.");
+      if(freeDays[e]?.includes(d)) return alert(`Zaměstnanec ${e} má v tento den volno.`);
+      if(shifts[d][s].count === 0) return alert(`Na tuto směnu není požadován žádný zaměstnanec (počet = 0).`);
+      if(shifts[d][s].assigned.includes(e)) return alert(`Zaměstnanec ${e} již je přiřazen na tuto směnu.`);
+      if(shifts[d][s].assigned.length >= shifts[d][s].count) return alert(`Na tuto směnu je již přiřazeno maximální množství zaměstnanců (${shifts[d][s].count}).`);
+      
+      shifts[d][s].assigned.push(e);
+      if(!fixedAssignments[d][s].includes(e)) fixedAssignments[d][s].push(e);
+      
+      updateTable();
+    }
+    
+    function removeAssignment() {
+      const d = document.getElementById("assignDay").value;
+      const s = document.getElementById("assignShift").value;
+      const e = document.getElementById("assignEmployee").value;
+      
+      if(!e) return alert("Nejprve přidejte zaměstnance.");
+      const i = shifts[d][s].assigned.indexOf(e);
+      if(i === -1) return alert(`Zaměstnanec ${e} není přiřazen na tuto směnu.`);
+      
+      shifts[d][s].assigned.splice(i, 1);
+      const fixedIndex = fixedAssignments[d][s].indexOf(e);
+      if(fixedIndex !== -1) fixedAssignments[d][s].splice(fixedIndex, 1);
+      
+      updateTable();
+    }
+    
+    function calculateHours(tr) {
+      if(!tr) return 0;
+      const [start, end] = tr.split('-');
+      const [sh, sm] = start.split(':').map(Number), [eh, em] = end.split(':').map(Number);
+      if(sh === 0 && sm === 0 && eh === 0 && em === 0) return 0;
+      let h = eh - sh, m = em - sm;
+      if(m < 0) {h--; m += 60;}
+      return h + m/60;
+    }
+    
+    function getEmployeeHours(e, tempShifts) {
+      const shiftsToCheck = tempShifts || shifts;
+      return days.reduce((t, d) => t + shiftTypes.reduce((st, s) => 
+        st + (shiftsToCheck[d][s].assigned.includes(e) ? calculateHours(shifts[d][s].time) : 0), 0), 0);
+    }
+    
+    function verificateSchedulesSolution() {
+      // Počítáme celkový počet pozic na směnách
+      let totalPositionsNeeded = 0;
+      days.forEach(d => {
+        shiftTypes.forEach(s => {
+          totalPositionsNeeded += shifts[d][s].count;
+        });
+      });
+      
+      // Počet dostupných zaměstnanců pro každý den (když nejsou na volnu)
+      let totalAvailableSlots = 0;
+      days.forEach(d => {
+        const availableEmps = employees.filter(e => !freeDays[e].includes(d));
+        // Každý zaměstnanec může jít na všechny tři směny v každý dostupný den
+        totalAvailableSlots += availableEmps.length * 3; 
+      });
+      
+      // Kontrola, zda máme dostatek pozic pro pokrytí všech směn
+      return {
+        valid: totalAvailableSlots >= totalPositionsNeeded,
+        totalAvailableSlots,
+        totalPositionsNeeded,
+        message: `Potřeba: ${totalPositionsNeeded} pozic na směnách, Dostupno: ${totalAvailableSlots} možných přiřazení`
+      };
+    }
+    
+    function distributeShifts() {
+      document.getElementById('confirmModal').style.display = 'none';
+      if(employees.length === 0) return alert("Přidejte alespoň jednoho zaměstnance.");
+      
+      // Kontrola, zda máme dostatek zaměstnanců
+      const verification = verificateSchedulesSolution();
+      if(!verification.valid) {
+        return alert(`Nelze vytvořit platný rozpis. ${verification.message}. Snižte počet potřebných zaměstnanců nebo přidejte více zaměstnanců či snižte počet volných dnů.`);
+      }
+      
+      let bestSolution = null;
+      let bestDifference = Infinity;
+      
+      for(let attempt = 0; attempt < 30; attempt++) {
+        // Resetujeme stav, ale zachováme fixní přiřazení
+        const tempAssignment = {};
+        const tempFreeDays = {};
+        
+        days.forEach(d => {
+          tempAssignment[d] = {};
+          shiftTypes.forEach(s => {
+            tempAssignment[d][s] = {
+              count: shifts[d][s].count,
+              assigned: [...fixedAssignments[d][s]]
+            };
+          });
+        });
+        
+        // Určení volných dnů
+        const shuffledEmployees = shuffle(employees);
+        let validFreeDays = true;
+        
+        shuffledEmployees.forEach(e => {
+          // Zjistíme dny s pevnými přiřazeními
+          const busyDays = new Set();
+          days.forEach(d => {
+            shiftTypes.forEach(s => {
+              if(fixedAssignments[d][s].includes(e)) {
+                busyDays.add(d);
+              }
+            });
+          });
+          
+          // Určíme volné dny
+          const reqDays = freeDaysCount[e] || 0;
+          if(reqDays === 0) {
+            tempFreeDays[e] = [];
+            return;
+          }
+          
+          // Dostupné dny pro volno
+          const availableDays = days.filter(d => !busyDays.has(d));
+          if(availableDays.length < reqDays) {
+            validFreeDays = false;
+            return;
+          }
+          
+          // Preferované dny mají přednost
+          const prefDays = shuffle(availableDays.filter(d => dayPreferences[e]?.[d]));
+          const otherDays = shuffle(availableDays.filter(d => !prefDays.includes(d)));
+          
+          tempFreeDays[e] = [...prefDays.slice(0, reqDays)];
+          if(tempFreeDays[e].length < reqDays) {
+            tempFreeDays[e].push(...otherDays.slice(0, reqDays - tempFreeDays[e].length));
+          }
+        });
+        
+        if(!validFreeDays) continue;
+        
+        // Počítáme, kolik změn je již přiřazeno každému zaměstnanci
+        const empHours = {};
+        shuffledEmployees.forEach(e => {
+          empHours[e] = days.reduce((total, d) => 
+            total + shiftTypes.reduce((st, s) => 
+              st + (tempAssignment[d][s].assigned.includes(e) ? calculateHours(shifts[d][s].time) : 0), 0
+            ), 0);
+        });
+        
+        // Vytvoříme prioritní seznam směn podle potřeby
+        const shiftPriorities = [];
+        
+        days.forEach(d => {
+          shiftTypes.forEach(s => {
+            const reqCount = shifts[d][s].count;
+            const currentCount = tempAssignment[d][s].assigned.length;
+            if(currentCount < reqCount) {
+              // Dostupní zaměstnanci jsou ti, kdo nemají volno tento den a ještě nejsou na této směně
+              const availableEmps = shuffledEmployees.filter(e => 
+                !tempFreeDays[e].includes(d) && !tempAssignment[d][s].assigned.includes(e)
+              );
+              
+              shiftPriorities.push({
+                day: d,
+                shift: s,
+                requiredCount: reqCount - currentCount,
+                availableCount: availableEmps.length
+              });
+            }
+          });
+        });
+        
+        // Seřadíme od nejkritičtějších (nejméně dostupných zaměstnanců vs. potřeba)
+        shiftPriorities.sort((a, b) => 
+          (a.availableCount / a.requiredCount) - (b.availableCount / b.requiredCount)
+        );
+        
+        // Přiřazujeme zaměstnance na směny podle priorit
+        let validAssignment = true;
+        
+        for(const priority of shiftPriorities) {
+          const { day, shift, requiredCount } = priority;
+          
+          // Dostupní zaměstnanci pro tuto směnu - můžou být i na jiných směnách téhož dne
+          const availableEmps = shuffledEmployees.filter(e => 
+            !tempFreeDays[e].includes(day) && !tempAssignment[day][shift].assigned.includes(e)
+          );
+          
+          if(availableEmps.length < requiredCount) {
+            validAssignment = false;
+            break;
+          }
+          
+          // Seřadíme podle hodin (méně vytížení mají přednost)
+          const sortedEmps = [...availableEmps].sort((a, b) => empHours[a] - empHours[b]);
+          
+          // Přiřadíme potřebný počet zaměstnanců
+          for(let i = 0; i < requiredCount; i++) {
+            const e = sortedEmps[i];
+            tempAssignment[day][shift].assigned.push(e);
+            empHours[e] += calculateHours(shifts[day][shift].time);
+          }
+        }
+        
+        if(!validAssignment) continue;
+        
+        // Optimalizace - výměna směn pro vyvážení hodin
+        for(let i = 0; i < 20; i++) {
+          // Hledáme nejvíce a nejméně vytíženého zaměstnance
+          let maxE = null, minE = null, maxH = -Infinity, minH = Infinity;
+          shuffledEmployees.forEach(e => {
+            const h = empHours[e];
+            if(h > maxH) { maxH = h; maxE = e; }
+            if(h < minH) { minH = h; minE = e; }
+          });
+          
+          if(maxH - minH < 1) break;
+          
+          // Zkusíme najít směnu k výměně
+          let swapped = false;
+          const shuffledDays = shuffle(days);
+          
+          for(const d of shuffledDays) {
+            if(swapped) break;
+            if(tempFreeDays[minE]?.includes(d)) continue;
+            
+            const shuffledShifts = shuffle(shiftTypes);
+            for(const s of shuffledShifts) {
+              if(fixedAssignments[d][s].includes(maxE)) continue;
+              
+              if(tempAssignment[d][s].assigned.includes(maxE) && !tempAssignment[d][s].assigned.includes(minE)) {
+                const idx = tempAssignment[d][s].assigned.indexOf(maxE);
+                tempAssignment[d][s].assigned[idx] = minE;
+                
+                // Aktualizujeme hodiny
+                const shiftHours = calculateHours(shifts[d][s].time);
+                empHours[maxE] -= shiftHours;
+                empHours[minE] += shiftHours;
+                
+                swapped = true;
+                break;
+              }
+            }
+          }
+          
+          if(!swapped) break;
+        }
+        
+        // Vyhodnotíme kvalitu řešení
+        let maxHours = -Infinity, minHours = Infinity;
+        shuffledEmployees.forEach(e => {
+          const h = empHours[e];
+          maxHours = Math.max(maxHours, h);
+          minHours = Math.min(minHours, h);
+        });
+        
+        const difference = maxHours - minHours;
+        
+        // Uložíme nejlepší řešení
+        if(difference < bestDifference) {
+          bestDifference = difference;
+          bestSolution = {
+            assignment: JSON.parse(JSON.stringify(tempAssignment)),
+            freeDays: JSON.parse(JSON.stringify(tempFreeDays))
+          };
+          
+          if(difference < 0.5) break;
+        }
+      }
+      
+      if(!bestSolution) {
+        return alert("Nepodařilo se najít validní rozpis. Zkuste snížit počet volných dnů nebo požadovaný počet zaměstnanců na směnách.");
+      }
+      
+      // Použijeme nejlepší nalezené řešení
+      days.forEach(d => {
+        shiftTypes.forEach(s => {
+          shifts[d][s].assigned = bestSolution.assignment[d][s].assigned;
+        });
+      });
+      
+      employees.forEach(e => {
+        freeDays[e] = bestSolution.freeDays[e] || [];
+      });
+      
+      updateTable();
+      updateFreeDayControls();
+    }
+    
+    function updateTimeRange(input, d, s) {
+      const inputs = input.closest('td').querySelectorAll('input[type="time"]');
+      shifts[d][s].time = `${inputs[0].value}-${inputs[1].value}`;
+      updateHoursSummary();
+    }
+    
+    function createCell(text, className = '') {
+      const cell = document.createElement("td");
+      if(text) cell.textContent = text;
+      if(className) cell.className = className;
+      return cell;
+    }
+    
+    function updateTable() {
+      const tbody = document.getElementById("scheduleTable").getElementsByTagName("tbody")[0];
+      tbody.innerHTML = "";
+      
+      days.forEach(d => {
+        const row = document.createElement("tr");
+        row.appendChild(createCell(d));
+        
+        shiftTypes.forEach(s => {
+          const [start, end] = shifts[d][s].time.split('-');
+          const timeCell = createCell('', 'editable');
+          timeCell.innerHTML = `<div><input type="time" class="time-input" value="${start}" onchange="updateTimeRange(this, '${d}', '${s}')">-<input type="time" class="time-input" value="${end}" onchange="updateTimeRange(this, '${d}', '${s}')"></div>`;
+          row.appendChild(timeCell);
+          
+          const countCell = createCell('', 'editable');
+          const countInput = Object.assign(document.createElement("input"), {
+            type:"number", className:"count-input", min:0, max:10, value:shifts[d][s].count
+          });
+          countInput.addEventListener("change", function() {updateCount(d, s, this.value);});
+          countCell.appendChild(countInput);
+          row.appendChild(countCell);
+          
+          row.appendChild(createCell(shifts[d][s].assigned.join(", "), shifts[d][s].assigned.length > 0 ? "assigned" : ""));
+        });
+        
+        const freeDayEmployees = employees.filter(e => freeDays[e]?.includes(d));
+        row.appendChild(createCell(freeDayEmployees.join(", "), freeDayEmployees.length > 0 ? "free-day-cell" : ""));
+        
+        tbody.appendChild(row);
+      });
+      
+      updateHoursSummary();
+    }
+    
+    function updateHoursSummary() {
+      const summaryDiv = document.getElementById("hoursSummary");
+      summaryDiv.innerHTML = "";
+      if(employees.length === 0) return;
+      
+      let totalHours = 0;
+      const empHours = {};
+      
+      employees.forEach(e => {
+        const h = getEmployeeHours(e);
+        empHours[e] = h;
+        totalHours += h;
+      });
+      
+      const avgHours = totalHours / employees.length;
+      
+      employees.forEach(e => {
+        const freeDayInfo = freeDays[e]?.length > 0 ? ` (volno: ${freeDays[e].join(", ")})` : "";
+        const reqDaysInfo = ` - požadováno ${freeDaysCount[e] || 0} volných dnů`;
+        const prefDays = days.filter(d => dayPreferences[e]?.[d]);
+        const prefInfo = prefDays.length > 0 ? ` (preference: ${prefDays.join(", ")})` : "";
+        
+        summaryDiv.innerHTML += `<p><strong>${e}${freeDayInfo}:</strong> ${empHours[e].toFixed(1)} hodin${reqDaysInfo}${prefInfo}</p>`;
+      });
+      
+      summaryDiv.innerHTML += `<p><strong>Průměr:</strong> ${avgHours.toFixed(1)} hodin</p>`;
+    }
+    
+    window.onclick = e => {if(e.target === document.getElementById("confirmModal")) document.getElementById("confirmModal").style.display = "none";};
+    window.onload = () => togglePanel('preferencesPanel');
+    
+    updateTable();
+    updateEmployeeDropdown();
+    updateFreeDayControls();
+  </script>
+</body
+</html>
